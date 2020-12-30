@@ -6,11 +6,7 @@
 umask "${PASSWORD_STORE_UMASK:-077}"
 set -o pipefail
 
-GPG_OPTS=( $PASSWORD_STORE_GPG_OPTS "--quiet" "--yes" "--compress-algo=none" "--no-encrypt-to" )
-GPG="gpg"
-export GPG_TTY="${GPG_TTY:-$(tty 2>/dev/null)}"
-which gpg2 &>/dev/null && GPG="gpg2"
-[[ -n $GPG_AGENT_INFO || $GPG == "gpg2" ]] && GPG_OPTS+=( "--batch" "--use-agent" )
+GPG="rage"
 
 PREFIX="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
 EXTENSIONS="${PASSWORD_STORE_EXTENSIONS_DIR:-$PREFIX/.extensions}"
@@ -98,11 +94,10 @@ set_gpg_recipients() {
 
 	verify_file "$current"
 
-	local gpg_id
-	while read -r gpg_id; do
-		GPG_RECIPIENT_ARGS+=( "-r" "$gpg_id" )
-		GPG_RECIPIENTS+=( "$gpg_id" )
-	done < "$current"
+	local age_id=$(grep "AGE-" "$current")
+	local pubkey=$(grep recipient "$current" | cut -f 3 -d ' ')
+	GPG_RECIPIENT_ARGS+=( "-r" "$pubkey" )
+	GPG_RECIPIENTS+=( "$age_id" )
 }
 
 reencrypt_path() {
@@ -343,7 +338,7 @@ cmd_init() {
 		rmdir -p "${gpg_id%/*}" 2>/dev/null
 	else
 		mkdir -v -p "$PREFIX/$id_path"
-		printf "%s\n" "$@" > "$gpg_id"
+		age-plugin-trezor -i foobar > "$gpg_id"
 		local id_print="$(printf "%s, " "$@")"
 		echo "Password store initialized for ${id_print%, }${id_path:+ ($id_path)}"
 		git_add_file "$gpg_id" "Set GPG id to ${id_print%, }${id_path:+ ($id_path)}."
@@ -359,7 +354,6 @@ cmd_init() {
 		fi
 	fi
 
-	reencrypt_path "$PREFIX/$id_path"
 	git_add_file "$PREFIX/$id_path" "Reencrypt password store using new GPG id ${id_print%, }${id_path:+ ($id_path)}."
 }
 
@@ -382,7 +376,7 @@ cmd_show() {
 	check_sneaky_paths "$path"
 	if [[ -f $passfile ]]; then
 		if [[ $clip -eq 0 && $qrcode -eq 0 ]]; then
-			pass="$($GPG -d "${GPG_OPTS[@]}" "$passfile" | $BASE64)" || exit $?
+			pass="$($GPG -i "$PREFIX/.gpg-id" -d "${GPG_OPTS[@]}" "$passfile" | $BASE64)" || exit $?
 			echo "$pass" | $BASE64 -d
 		else
 			[[ $selected_line =~ ^[0-9]+$ ]] || die "Clip location '$selected_line' is not a number."
@@ -495,7 +489,7 @@ cmd_edit() {
 
 	local action="Add"
 	if [[ -f $passfile ]]; then
-		$GPG -d -o "$tmp_file" "${GPG_OPTS[@]}" "$passfile" || exit 1
+		$GPG -i "$PREFIX/.gpg-id" -d -o "$tmp_file" "${GPG_OPTS[@]}" "$passfile" || exit 1
 		action="Edit"
 	fi
 	${EDITOR:-vi} "$tmp_file"
